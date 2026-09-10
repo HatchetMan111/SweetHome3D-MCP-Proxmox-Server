@@ -154,7 +154,33 @@ for PLUGDIR in "/root/.eteks/sweethome3d/plugins" "/root/.sweethome3d/plugins" "
   rm -f "${PLUGDIR}/plugin.sh3p" 2>/dev/null || true
   cp /tmp/mcp/*.sh3p "${PLUGDIR}/" 2>/dev/null || true
 done
+ls /root/.eteks/sweethome3d/plugins/*.sh3p >/dev/null 2>&1 || { msg_error "Plugin-Datei fehlt nach Kopie"; exit 1; }
 msg_ok "MCP-Plugin installiert (${PLUGIN_FILE})"
+
+# ---------- 3b. Desktop-Verknüpfung (Starter-Icon) ----------
+msg_info "Lege Sweet-Home-3D-Starter an (Menü + Desktop-Icon)"
+SH3D_ICON=$(ls "${SH3D_DIR}"/*.png 2>/dev/null | head -n1 || true)
+[ -z "${SH3D_ICON}" ] && SH3D_ICON="applications-graphics"
+cat > /usr/share/applications/sweethome3d.desktop <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Sweet Home 3D
+Comment=Grundrisse und 3D-Einrichtung – AI-steuerbar via MCP (Port 9877)
+Exec=${SH3D_DIR}/SweetHome3D
+Icon=${SH3D_ICON}
+Terminal=false
+Categories=Graphics;3DGraphics;
+StartupNotify=true
+EOF
+chmod 644 /usr/share/applications/sweethome3d.desktop
+mkdir -p /root/Desktop
+cp /usr/share/applications/sweethome3d.desktop /root/Desktop/
+chmod +x /root/Desktop/sweethome3d.desktop
+if command -v gio >/dev/null 2>&1; then
+  gio set /root/Desktop/sweethome3d.desktop metadata::trusted true 2>/dev/null || true
+fi
+msg_ok "Starter angelegt (Menü + Desktop)"
 
 # ---------- 4. VNC + noVNC (Xvnc direkt, ohne vncserver-Wrapper) ----------
 # Der vncserver-Perl-Wrapper starb mit Exit 255 und die Restart-Schleife hat
@@ -305,8 +331,12 @@ echo "  2) In Sweet Home 3D: Tools/Werkzeuge → MCP Server... → muss 'Running
 echo "     Falls nicht: SH3D einmal neu starten (läuft im VNC-Desktop), Plugin liegt in ~/.eteks/sweethome3d/plugins/"
 echo "  3) Erst einen Grundriss öffnen/erstellen, dann AI verbinden – MCP steuert immer das offene Home."
 echo ""
-echo -e "${BL}opencode verbinden (auf deinem Rechner, nicht in der VM):${CL}"
-echo "  In ~/.config/opencode/opencode.json eintragen (IP anpassen!):"
+echo -e "${BL}So nutzt du das per opencode (Schritt für Schritt):${CL}"
+echo "  1) In Sweet Home 3D (per Weboberfläche) ein Home ÖFFNEN oder neu anlegen."
+echo "     Die AI steuert immer das gerade offene Home – ohne offenes Home geht nichts."
+echo "  2) Prüfen: Menü Tools/Werkzeuge -> MCP Server... muss 'Running on ${MCP_PORT}' zeigen."
+echo "     Plugin-Datei liegt in ~/.eteks/sweethome3d/plugins/ (${PLUGIN_FILE})."
+echo "  3) Auf DEINEM Rechner (nicht VM) in ~/.config/opencode/opencode.json eintragen:"
 cat <<EOF
   {
     "\$schema": "https://opencode.ai/config.json",
@@ -319,8 +349,15 @@ cat <<EOF
     }
   }
 EOF
-echo "  Danach opencode neu starten. Achtung: MCP hat keine Auth –"
-echo "  Port ${MCP_PORT} NICHT direkt ins Internet, nur via VPN/Tailscale/WireGuard oder SSH-Tunnel:"
+echo "  4) opencode NEU STARTEN (Config wird nur beim Start geladen)."
+echo "  5) Erster Test-Prompt in opencode:"
+echo '     "Nutze sweethome3d-vm get_state und fasse zusammen, was im aktuellen Home ist."'
+echo "     Wenn eine Zusammenfassung von Wänden/Möbeln kommt, steht die Verbindung."
+echo "  6) Danach arbeiten lassen, z.B.:"
+echo '     "Erstelle 10x8m Grundriss mit 2 Zimmern, Küche, Bad, 260cm Wandhöhe, dann export_plan_image."'
+echo "     Ergebnis per Weboberfläche live in Sweet Home 3D verfolgen."
+echo ""
+echo "  Fernzugriff-Tipp: MCP hat keine Auth – im LAN ok, übers Internet nur per Tunnel:"
 echo "    ssh -L 9877:localhost:9877 root@${IP}   # dann in opencode http://localhost:9877/mcp nutzen"
 echo ""
 echo -e "${BL}Erste Prompts zum Testen:${CL}"
