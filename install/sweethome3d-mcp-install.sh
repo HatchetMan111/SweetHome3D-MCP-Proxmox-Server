@@ -52,9 +52,12 @@ if ! grep -qs "Ubuntu.*24.04" /etc/os-release; then msg_info "Kein Ubuntu 24.04 
 
 # Unter Cloud-Init (Auto-Install beim ersten Boot) keinen Abbruch wegen fehlendem TTY,
 # und auf cloud-init / apt-Locks warten (sonst schlägt apt-get fehl).
+# Achtung: KEIN nacktes `cloud-init status --wait` hier – wenn dieses Script
+# selbst per Cloud-Init runcmd läuft, wartet es dabei auf sich selbst (Deadlock).
+# Daher strikt zeitbegrenzt, Fehler egal.
 if command -v cloud-init >/dev/null 2>&1; then
-  msg_info "Warte ggf. auf cloud-init (max 10 Min)"
-  cloud-init status --wait >/dev/null 2>&1 || true
+  msg_info "Warte ggf. auf cloud-init (max 2 Min)"
+  timeout 120 cloud-init status --wait >/dev/null 2>&1 || true
 fi
 
 # ---------- 1. System ----------
