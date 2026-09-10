@@ -114,6 +114,20 @@ fi
 [ -x "${SH3D_DIR}/SweetHome3D" ] || { msg_error "Starter ${SH3D_DIR}/SweetHome3D fehlt"; ls -la "${SH3D_DIR}" | head; exit 1; }
 chmod +x "${SH3D_DIR}/SweetHome3D"
 ln -sf "${SH3D_DIR}/SweetHome3D" /usr/local/bin/sweethome3d
+# MCP-Plugin braucht Java 11+, das mitgelieferte SH3D-Runtime ist aber Java 8
+# -> stilllegen, damit der Starter das System-Java (17) nimmt
+if [ -x "${SH3D_DIR}/runtime/bin/java" ]; then
+  BUNDLED_VER=$("${SH3D_DIR}/runtime/bin/java" -version 2>&1 | head -n1 || true)
+  msg_info "Gebundeltes SH3D-Java: ${BUNDLED_VER}"
+  if echo "${BUNDLED_VER}" | grep -qE '"1\.[0-8]\.'; then
+    msg_info "Bundled Java 8 erkannt – wird stillgelegt (System-Java übernimmt)"
+    rm -rf "${SH3D_DIR}/runtime.bundled-j8-disabled"
+    mv "${SH3D_DIR}/runtime" "${SH3D_DIR}/runtime.bundled-j8-disabled"
+  fi
+fi
+SYS_JAVA_VER=$(java -version 2>&1 | head -n1 || true)
+msg_info "System-Java: ${SYS_JAVA_VER}"
+echo "${SYS_JAVA_VER}" | grep -qE '"(1[1-9]|[2-9][0-9])\.' || { msg_error "System-Java < 11 – MCP-Plugin braucht Java 11+"; exit 1; }
 msg_ok "Sweet Home 3D installiert"
 
 # ---------- 3. MCP-Plugin (latest .sh3p) ----------
@@ -124,14 +138,17 @@ if [ -z "${MCP_URL}" ]; then
   MCP_URL="https://github.com/${MCP_REPO}/releases/download/v1.1.0/sh3d-mcp-plugin-1.1.0.sh3p"
   msg_info "GitHub-API gab kein Asset – nutze Fallback: ${MCP_URL}"
 fi
-mkdir -p /tmp/mcp && curl -fSL -o /tmp/mcp/plugin.sh3p "${MCP_URL}" || {
+mkdir -p /tmp/mcp && rm -f /tmp/mcp/*.sh3p
+PLUGIN_FILE=$(basename "${MCP_URL}")
+curl -fSL -o "/tmp/mcp/${PLUGIN_FILE}" "${MCP_URL}" || {
   msg_error "MCP-Download fehlgeschlagen: ${MCP_URL}"; exit 1;
 }
 for PLUGDIR in "/root/.eteks/sweethome3d/plugins" "/root/.sweethome3d/plugins" "/home/sh3d/.eteks/sweethome3d/plugins" "/home/sh3d/.sweethome3d/plugins"; do
   mkdir -p "${PLUGDIR}"
-  cp /tmp/mcp/plugin.sh3p "${PLUGDIR}/" 2>/dev/null || true
+  rm -f "${PLUGDIR}/plugin.sh3p" 2>/dev/null || true
+  cp /tmp/mcp/*.sh3p "${PLUGDIR}/" 2>/dev/null || true
 done
-msg_ok "MCP-Plugin installiert"
+msg_ok "MCP-Plugin installiert (${PLUGIN_FILE})"
 
 # ---------- 4. VNC + noVNC (Xvnc direkt, ohne vncserver-Wrapper) ----------
 # Der vncserver-Perl-Wrapper starb mit Exit 255 und die Restart-Schleife hat
@@ -145,7 +162,7 @@ rm -f /etc/systemd/system/vncserver@.service
 DISPNUM="${VNC_DISPLAY#:}"
 # Achtung: Pattern in eckigen Klammern, damit pkill nicht die eigene Shell trifft
 pkill -f "Xvnc :[${DISPNUM}]" >/dev/null 2>&1 || true
-pkill -f "SweetHome3D/SweetHome3D" >/dev/null 2>&1 || true
+pkill -f "com.eteks.sweethome3d.SweetHome3D" >/dev/null 2>&1 || true
 sleep 2
 rm -rf "/tmp/.X11-unix/X${DISPNUM}" "/tmp/.X${DISPNUM}-lock" || true
 rm -f /root/.vnc/*.log /root/.vnc/*.pid || true
@@ -175,6 +192,7 @@ if command -v xauth >/dev/null 2>&1; then
 fi
 unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS
 [ -r /root/.Xresources ] && xrdb /root/.Xresources 2>/dev/null || true
+pkill -f "com.eteks.sweethome3d.SweetHome3D" 2>/dev/null || true
 startxfce4 &
 sleep 2
 setsid /opt/SweetHome3D/SweetHome3D >/var/log/sweethome3d-app.log 2>&1 &
