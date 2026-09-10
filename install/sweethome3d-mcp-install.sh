@@ -27,7 +27,20 @@ EOF
 msg_info()  { echo -e "  ${BL}●${CL} $1"; }
 msg_ok()    { echo -e "  ${CM} $1"; }
 msg_error() { echo -e "  ${CROSS} $1"; }
-catch_errors() { msg_error "Fehler in Zeile $1 – Abbruch."; exit 1; }
+catch_errors() {
+  msg_error "Fehler in Zeile $1 – Abbruch. Diagnose:"
+  echo "----- systemctl vncserver@1 -----"
+  systemctl status vncserver@1.service --no-pager 2>&1 | head -20 || true
+  echo "----- journal vncserver@1 (letzte 25) -----"
+  journalctl -u vncserver@1 --no-pager -n 25 2>&1 | tail -25 || true
+  echo "----- journal novnc (letzte 10) -----"
+  journalctl -u novnc --no-pager -n 10 2>&1 | tail -10 || true
+  echo "----- /root/.vnc logs -----"
+  for f in /root/.vnc/*.log; do
+    [ -f "$f" ] && { echo "--- $f ---"; tail -20 "$f" 2>&1; }
+  done
+  exit 1
+}
 trap 'catch_errors $LINENO' ERR
 
 # ---------- Config ----------
@@ -120,7 +133,11 @@ msg_ok "MCP-Plugin installiert"
 
 # ---------- 4. VNC + noVNC ----------
 msg_info "Richte TigerVNC (${VNC_DISPLAY}) + noVNC (${NOVNC_PORT}) ein"
+# Alte Sessions + stale X-Locks aus vorherigen (abgebrochenen) Läufen räumen
 /usr/bin/vncserver -kill "${VNC_DISPLAY}" >/dev/null 2>&1 || true
+DISPNUM="${VNC_DISPLAY#:}"
+rm -rf "/tmp/.X11-unix/X${DISPNUM}" "/tmp/.X${DISPNUM}-lock" || true
+rm -f /root/.vnc/*.log /root/.vnc/*.pid || true
 mkdir -p /root/.vnc
 printf '%s' "${VNCPASS}" | vncpasswd -f > /root/.vnc/passwd
 chmod 600 /root/.vnc/passwd
