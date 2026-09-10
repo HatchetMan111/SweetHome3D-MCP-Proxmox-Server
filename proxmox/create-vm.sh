@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+#
+# SweetHome3D-MCP – Proxmox VM erstellen (Host-Script, Community-Scripts Stil)
+# Auf dem PROXMOX-HOST als root ausführen, NICHT in der VM.
+#
+# Einzeiler:
+#   bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/proxmox/create-vm.sh)"
+#
+# Was es tut:
+#   - nimmt automatisch die nächste freie VMID (pvesh get /cluster/nextid)
+#   - falls Wunsch-ID belegt ist, wird hochgezählt bis frei
+#   - erstellt Ubuntu 24.04 Cloud-Init VM namens 3D-Home (4 vCPU / 8GB / 20GB)
+#
+# Optional per Env überschreibbar:
+#   VM_ID=200 VM_NAME=3D-Home VM_CPU=4 VM_RAM=8192 VM_DISK_GB=20 \
+#   VM_BRIDGE=vmbr0 VM_STORAGE=local-lvm VM_ISO_STORAGE=local \
+#   bash create-vm.sh
+#
+set -e
+
+YW=$(echo "\033[33m"); BL=$(echo "\033[36m"); RD=$(echo "\033[01;31m")
+GN=$(echo "\033[1;92m"); CL=$(echo "\033[m"); CM="${GN}✓${CL}"; CROSS="${RD}✗${CL}"
+msg_info()  { echo -e "  ${BL}●${CL} $1"; }
+msg_ok()    { echo -e "  ${CM} $1"; }
+msg_error() { echo -e "  ${CROSS} $1"; }
+header_info() {
+  clear
+  cat <<"EOF"
+   ____  ___  _   _                      _____ ____
+  |___ \|  _|| | | | ___  _ __ ___   ___|___ |  _ \
+    / /| |_ | |_| |/ _ \| '_ ` _ \ / _ \ / /| | | |
+   / / |  _||  _  | (_) | | | | | |  __// / | |_| |
+  /_/  |_|  |_| |_|\___/|_| |_| |_|\___/_/  |____/
+        Proxmox VM-Ersteller für SweetHome3D-MCP
+EOF
+}
+
+VM_NAME="${VM_NAME:-3D-Home}"
+VM_CPU="${VM_CPU:-4}"
+VM_RAM="${VM_RAM:-8192}"
+VM_DISK_GB="${VM_DISK_GB:-20}"
+VM_BRIDGE="${VM_BRIDGE:-vmbr0}"
+VM_STORAGE="${VM_STORAGE:-local-lvm}"
+VM_ISO_STORAGE="${VM_ISO_STORAGE:-local}"
+CLOUD_IMG_URL="${CLOUD_IMG_URL:-https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img}"
+WANT_ID="${VM_ID:-}"
+
+header_info
+echo -e "${YW}Name:${CL} ${VM_NAME} | CPU: ${VM_CPU} | RAM: ${VM_RAM}MB | Disk: ${VM_DISK_GB}G\n"
+
+if [ "$(id -u)" -ne 0 ]; then msg_error "Bitte als root auf dem Proxmox-Host ausführen."; exit 1; fi
+command -v qm >/dev/null 2>&1 || { msg_error "qm nicht gefunden – kein Proxmox-Host?"; exit 1; }
+command -v pvesh >/dev/null 2>&1 || { msg_error "pvesh nicht gefunden – kein Proxmox-Host?"; exit 1; }
+
+vmid_taken() { qm status "$1" >/dev/null 2>&1; }
+
+# --- VMID bestimmen: belegt -> nächste nehmen ---
+if [ -n "${WANT_ID}" ]; then
+  VMID="${WANT_ID}"
+  while vmid_taken "${VMID}"; do
+    msg_info "VMID ${VMID} belegt – nehme nächste."
+    VMID=$((VMID + 1))
+  done
+else
+  VMID=$(pvesh get /cluster/nextid 2>/dev/null || echo "200")
+  # nextid kann String mit Anführungszeichen sein -> nur Ziffern
+  VMID=$(echo "${VMID}" | tr -cd '0-9')
+  [ -z "${VMID}" ] && VMID=200
+  while vmid_taken "${VMID}"; do
+    VMID=$((VMID + 1))
+  done
+fi
+msg_info "Nutze VMID ${VMID} / Name ${VM_NAME}"
+
+# --- Storage prüfen, ggf. Fallback ---
+if ! pvesm status --storage "${VM_STORAGE}" >/dev/null 2>&1; then
+  msg_info "Storage ${VM_STORAGE} nicht gefunden – suche Ersatz."
+  VM_STORAGE=$(pvesm status -content images 2>/dev/null | awk 'NR>1 {print $1}' | head -n1)
+  [ -z "${VM_STORAGE}" ] && { msg_error "Kein Storage mit images-Content gefunden."; exit 1; }
+  msg_info "Nutze Storage ${VM_STORAGE}"
+fi
+
+# --- Cloud-Image laden ---
+IMG_TMP="/var/lib/vz/template/iso/noble-server-cloudimg-amd64-${VMID}.img"
+mkdir -p "$(dirname "${IMG_TMP}")"
+if [ ! -s "${IMG_TMP}" ]; then
+  msg_info "Lade Ubuntu 24.04 Cloud-Image (einmalig, ~600MB)"
+  wget -q --show-progress -O "${IMG_TMP}" "${CLOUD_IMG_URL}"
+fi
+msg_ok "Cloud-Image bereit"
+
+# --- VM erstellen ---
+msg_info "Erstelle VM ${VMID} (${VM_NAME})"
+qm create "${VMID}" \
+  --name "${VM_NAME}" \
+  --memory "${VM_RAM}" \
+  --cores "${VM_CPU}" \
+  --sockets 1 \
+  --cpu host \
+  --machine q35 \
+  --bios seabios \
+  --ostype l26 \
+  --agent enabled=1 \
+  --net0 "virtio,bridge=${VM_BRIDGE}" \
+  --scsihw virtio-scsi-pci \
+  --boot order=scsi0 \
+  --serial0 socket \
+  --vga std
+
+qm importdisk "${VMID}" "${IMG_TMP}" "${VM_STORAGE}" --format qcow2 >/dev/null
+qm set "${VMID}" --scsi0 "${VM_STORAGE}:vm-${VMID}-disk-0,discard=on,ssd=1" >/dev/null
+qm resize "${VMID}" scsi0 "${VM_DISK_GB}G" >/dev/null
+qm set "${VMID}" \
+  --ide2 "${VM_STORAGE}:cloudinit" \
+  --ipconfig0 ip=dhcp \
+  --ciuser ubuntu \
+  --cipassword ubuntu >/dev/null
+qm set "${VMID}" --description "SweetHome3D-MCP Web-Desktop (Ubuntu 24.04 + XFCE + noVNC :6080 + MCP :9877). Inner-Setup: siehe README." >/dev/null
+
+msg_ok "VM ${VMID} erstellt"
+
+# --- Starten ---
+qm start "${VMID}" >/dev/null 2>&1 || msg_info "Autostart übersprungen – bitte manuell starten."
+sleep 3
+qm status "${VMID}" || true
+
+clear
+header_info
+echo -e "${GN}✔ VM fertig — ${VM_NAME} (${VMID})${CL}\n"
+echo -e "${YW}VMID:${CL}  ${VMID}"
+echo -e "${YW}Name:${CL}  ${VM_NAME}"
+echo -e "${YW}Specs:${CL} ${VM_CPU} vCPU / ${VM_RAM}MB RAM / ${VM_DISK_GB}G Disk"
+echo ""
+echo -e "${BL}So geht's weiter:${CL}"
+echo "  1) Proxmox → VM ${VMID} → Console/Cloud-Init IP abwarten (DHCP)."
+echo "     Login: ubuntu / ubuntu (bitte nach erstem Login ändern!)"
+echo "  2) In der VM als root das Innen-Setup starten:"
+echo "     curl -fsSL -o sweethome3d-mcp-install.sh \\"
+echo "       https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/install/sweethome3d-mcp-install.sh"
+echo "     chmod +x sweethome3d-mcp-install.sh && bash sweethome3d-mcp-install.sh"
+echo "  3) Danach Browser: http://VM-IP:6080/vnc.html, MCP: http://VM-IP:9877/mcp"
+echo ""
+echo -e "${BL}Hinweis:${CL} Falls VMID ${VMID} belegt gewesen wäre, wurde automatisch hochgezählt."
+echo "  Mit VM_ID=250 bash create-vm.sh kannst du eine Wunsch-ID vorgeben."

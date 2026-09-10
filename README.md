@@ -10,10 +10,22 @@ Sweet Home 3D als 24/7 Desktop in einer Proxmox-VM (Ubuntu 24.04 + XFCE + noVNC)
 - MCP-Plugin (GitHub `grimashevich/sweethome3d-mcp-server`, latest Release) nach `~/.eteks/sweethome3d/plugins/`
 - systemd-Services `vncserver@1` + `novnc`, SH3D-Autostart im VNC-Desktop
 
-## Schnellstart
+## Schnellstart (Proxmox-Host)
 
-1. Frische Ubuntu 24.04 VM in Proxmox erstellen (Desktop-Profil, siehe oben).
-2. Als root in der VM:
+Einzeiler auf dem Proxmox-Host als root — erstellt automatisch die VM `3D-Home` mit nächster freier VMID (belegte IDs werden übersprungen):
+
+```bash
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/proxmox/create-vm.sh)"
+```
+
+Optional mit Wunsch-ID / eigenem Namen (belegt → nächste frei wird genommen):
+
+```bash
+VM_ID=200 VM_NAME=3D-Home bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/proxmox/create-vm.sh)"
+```
+
+## Innen-Setup (in der VM)
+1. Als root in der VM:
 
 ```bash
 curl -fsSL -o sweethome3d-mcp-install.sh https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/install/sweethome3d-mcp-install.sh
@@ -23,7 +35,7 @@ bash sweethome3d-mcp-install.sh
 # VNCPASS=meinpass bash sweethome3d-mcp-install.sh
 ```
 
-3. Am Ende zeigt das Script:
+2. Am Ende zeigt das Script:
 
 ```
 Weboberfläche (Browser): http://VM-IP:6080/vnc.html
