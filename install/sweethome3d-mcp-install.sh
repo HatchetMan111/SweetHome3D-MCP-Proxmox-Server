@@ -142,10 +142,11 @@ msg_info "Richte Xvnc (${VNC_DISPLAY}) + noVNC (${NOVNC_PORT}) ein"
 systemctl disable --now vncserver@1.service >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/vncserver@.service
 /usr/bin/vncserver -kill "${VNC_DISPLAY}" >/dev/null 2>&1 || true
-pkill -f "Xvnc ${VNC_DISPLAY}" >/dev/null 2>&1 || true
+DISPNUM="${VNC_DISPLAY#:}"
+# Achtung: Pattern in eckigen Klammern, damit pkill nicht die eigene Shell trifft
+pkill -f "Xvnc :[${DISPNUM}]" >/dev/null 2>&1 || true
 pkill -f "SweetHome3D/SweetHome3D" >/dev/null 2>&1 || true
 sleep 2
-DISPNUM="${VNC_DISPLAY#:}"
 rm -rf "/tmp/.X11-unix/X${DISPNUM}" "/tmp/.X${DISPNUM}-lock" || true
 rm -f /root/.vnc/*.log /root/.vnc/*.pid || true
 mkdir -p /root/.vnc
@@ -187,7 +188,7 @@ Description=SweetHome3D Desktop (Xvnc + XFCE + SH3D)
 After=network.target
 [Service]
 Type=simple
-ExecStartPre=/bin/sh -c '/usr/bin/vncserver -kill :1 >/dev/null 2>&1 || :; /usr/bin/pkill -f "Xvnc :1" >/dev/null 2>&1 || :; rm -rf /tmp/.X11-unix/X1 /tmp/.X1-lock'
+ExecStartPre=/bin/sh -c '/usr/bin/vncserver -kill :1 >/dev/null 2>&1 || :; /usr/bin/pkill -f "Xvnc :[1]" >/dev/null 2>&1 || :; rm -rf /tmp/.X11-unix/X1 /tmp/.X1-lock'
 ExecStart=/usr/local/bin/sh3d-xsession
 Restart=always
 RestartSec=5
