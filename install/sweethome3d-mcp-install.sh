@@ -56,32 +56,44 @@ if command -v cloud-init >/dev/null 2>&1; then
   msg_info "Warte ggf. auf cloud-init (max 10 Min)"
   cloud-init status --wait >/dev/null 2>&1 || true
 fi
-msg_info "Warte ggf. auf apt-Sperren (max 10 Min)"
-for i in $(seq 1 120); do
-  if ! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then break; fi
-  sleep 5
-done
 
 # ---------- 1. System ----------
 msg_info "System updaten + Basis installieren"
-apt-get update -qq
-apt-get upgrade -y -qq
-apt-get install -y -qq curl wget unzip git sudo net-tools iproute2 \
+if command -v fuser >/dev/null 2>&1; then
+  msg_info "Warte ggf. auf apt-Sperren (max 10 Min)"
+  for i in $(seq 1 120); do
+    if ! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then break; fi
+    sleep 5
+  done
+fi
+apt-get update -qq || { msg_info "apt-update Retry in 10s"; sleep 10; apt-get update -qq; }
+if [ "${UPGRADE:-0}" = "1" ]; then
+  msg_info "Upgrade (UPGRADE=1 gesetzt, dauert länger)"
+  apt-get upgrade -y -qq
+else
+  msg_info "Upgrade übersprungen (mit UPGRADE=1 aktivierbar)"
+fi
+apt-get install -y curl wget unzip git sudo net-tools iproute2 \
   openjdk-17-jre xfce4 xfce4-terminal dbus-x11 \
   tigervnc-standalone-server tigervnc-common \
-  novnc websockify python3-websockify > /dev/null
+  novnc websockify python3-websockify
 msg_ok "Basis installiert"
 
 # ---------- 2. Sweet Home 3D ----------
 msg_info "Installiere Sweet Home 3D ${SH3D_VER} nach ${SH3D_DIR}"
-rm -rf /tmp/sh3d.tgz "${SH3D_DIR}"
-curl -fSL -o /tmp/sh3d.tgz "${SH3D_URL}"
+rm -rf /tmp/sh3d.tgz "${SH3D_DIR}" /opt/SweetHome3D-"${SH3D_VER}"
+curl -fSL --retry 3 -o /tmp/sh3d.tgz "${SH3D_URL}"
 mkdir -p /opt
 tar xzf /tmp/sh3d.tgz -C /opt
-# Ordner heißt SweetHome3D-7.5 -> normieren
+# Extrahierter Ordner heißt SweetHome3D-<VER> -> normieren
 if [ ! -d "${SH3D_DIR}" ]; then
-  mv /opt/SweetHome3D-* "${SH3D_DIR}"
+  if [ -d "/opt/SweetHome3D-${SH3D_VER}" ]; then
+    mv "/opt/SweetHome3D-${SH3D_VER}" "${SH3D_DIR}"
+  else
+    msg_error "SH3D-Archiv unerwartet – kein Ordner SweetHome3D-${SH3D_VER} in /opt"; ls /opt; exit 1
+  fi
 fi
+[ -x "${SH3D_DIR}/SweetHome3D" ] || { msg_error "Starter ${SH3D_DIR}/SweetHome3D fehlt"; ls -la "${SH3D_DIR}" | head; exit 1; }
 chmod +x "${SH3D_DIR}/SweetHome3D"
 ln -sf "${SH3D_DIR}/SweetHome3D" /usr/local/bin/sweethome3d
 msg_ok "Sweet Home 3D installiert"
@@ -105,18 +117,19 @@ msg_ok "MCP-Plugin installiert"
 
 # ---------- 4. VNC + noVNC ----------
 msg_info "Richte TigerVNC (${VNC_DISPLAY}) + noVNC (${NOVNC_PORT}) ein"
+/usr/bin/vncserver -kill "${VNC_DISPLAY}" >/dev/null 2>&1 || true
 mkdir -p /root/.vnc
-echo "${VNCPASS}" | vncpasswd -f > /root/.vnc/passwd
+printf '%s' "${VNCPASS}" | vncpasswd -f > /root/.vnc/passwd
 chmod 600 /root/.vnc/passwd
 
 cat > /root/.vnc/xstartup <<'EOF'
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-[ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
 [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
 startxfce4 &
 # Sweet Home 3D Autostart (MCP startet automatisch mit, Port 9877)
+sleep 2
 /opt/SweetHome3D/SweetHome3D &
 EOF
 chmod +x /root/.vnc/xstartup
@@ -139,15 +152,20 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+WEBSOCKIFY_BIN=$(command -v websockify || echo /usr/bin/websockify)
+[ -x "${WEBSOCKIFY_BIN}" ] || { msg_error "websockify nicht gefunden – Paket websockify fehlt?"; exit 1; }
 NOVNC_WEB="/usr/share/novnc"
-[ -d "${NOVNC_WEB}" ] || NOVNC_WEB="/usr/share/novnc"
+if [ ! -f "${NOVNC_WEB}/vnc.html" ]; then
+  msg_error "noVNC Web-Dateien fehlen unter ${NOVNC_WEB} – Paket novnc fehlt?"
+  exit 1
+fi
 cat > /etc/systemd/system/novnc.service <<EOF
 [Unit]
 Description=noVNC WebSocket Proxy (SweetHome3D Web-Desktop)
 After=network.target vncserver@1.service
 Wants=vncserver@1.service
 [Service]
-ExecStart=/usr/bin/websockify --web=${NOVNC_WEB} ${NOVNC_PORT} localhost:${VNC_PORT}
+ExecStart=${WEBSOCKIFY_BIN} --web=${NOVNC_WEB} ${NOVNC_PORT} localhost:${VNC_PORT}
 Restart=always
 RestartSec=3
 [Install]
@@ -174,7 +192,7 @@ systemctl is-active -q novnc.service || { msg_error "noVNC startet nicht – jou
 msg_ok "Services aktiv"
 
 # ---------- 5. Abschluss ----------
-IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
 [ -z "${IP}" ] && IP="<VM-IP>"
 MCP_TEST=$(curl -s -m 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:${MCP_PORT}/mcp" || echo "000")
 
