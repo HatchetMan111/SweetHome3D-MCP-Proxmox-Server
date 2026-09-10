@@ -240,10 +240,32 @@ systemctl is-active -q sweethome3d-desktop.service || { msg_error "Desktop-Servi
 systemctl is-active -q novnc.service || { msg_error "noVNC startet nicht – journalctl -u novnc"; exit 1; }
 msg_ok "Services aktiv"
 
+# SH3D (Java) braucht beim ersten Start 1-3 Min – auf MCP-Port warten statt raten
+msg_info "Warte auf Sweet Home 3D / MCP-Port ${MCP_PORT} (max 3 Min)"
+MCP_TEST="000"
+for i in $(seq 1 60); do
+  CODE=$(curl -s -m 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:${MCP_PORT}/mcp" 2>/dev/null || true)
+  [ -z "${CODE}" ] && CODE="000"
+  if [ "${CODE}" != "000" ]; then MCP_TEST="${CODE}"; break; fi
+  sleep 3
+done
+if [ "${MCP_TEST}" = "000" ]; then
+  msg_error "MCP-Port ${MCP_PORT} antwortet nicht – SH3D-Prozess prüfen:"
+  ps aux | grep -iE 'sweethome|Xvnc|startxfce' | grep -v grep || true
+  tail -30 /var/log/sweethome3d-app.log 2>&1 || true
+  exit 1
+fi
+msg_ok "MCP antwortet (HTTP ${MCP_TEST})"
+
+# Web-Port muss wirklich lauschen, sonst kein Erfolgsbanner
+if ! (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":${NOVNC_PORT} "; then
+  msg_error "Port ${NOVNC_PORT} lauscht nicht – journalctl -u novnc prüfen"
+  exit 1
+fi
+
 # ---------- 5. Abschluss ----------
 IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
 [ -z "${IP}" ] && IP="<VM-IP>"
-MCP_TEST=$(curl -s -m 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:${MCP_PORT}/mcp" || echo "000")
 
 clear 2>/dev/null || true
 header_info
