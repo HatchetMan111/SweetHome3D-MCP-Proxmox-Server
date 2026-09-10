@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "sweethome3d-vm": {
+      "type": "remote",
+      "url": "http://VM-IP:9877/mcp",
+      "enabled": true
+    }
+  }
+}
