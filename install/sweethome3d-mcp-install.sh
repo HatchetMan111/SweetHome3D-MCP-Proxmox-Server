@@ -114,20 +114,26 @@ fi
 [ -x "${SH3D_DIR}/SweetHome3D" ] || { msg_error "Starter ${SH3D_DIR}/SweetHome3D fehlt"; ls -la "${SH3D_DIR}" | head; exit 1; }
 chmod +x "${SH3D_DIR}/SweetHome3D"
 ln -sf "${SH3D_DIR}/SweetHome3D" /usr/local/bin/sweethome3d
-# MCP-Plugin braucht Java 11+, das mitgelieferte SH3D-Runtime ist aber Java 8
-# -> stilllegen, damit der Starter das System-Java (17) nimmt
-if [ -x "${SH3D_DIR}/runtime/bin/java" ]; then
+# MCP-Plugin braucht Java 11+, das mitgelieferte SH3D-Runtime ist aber Java 8.
+# Der SH3D-Starter ruft hart "$app_home/runtime/bin/java" auf (kein Fallback),
+# daher wird runtime per Symlink auf das System-Java (17) gebogen.
+# Bundle bleibt als Backup erhalten.
+if [ -d "${SH3D_DIR}/runtime" ] && [ ! -L "${SH3D_DIR}/runtime" ]; then
   BUNDLED_VER=$("${SH3D_DIR}/runtime/bin/java" -version 2>&1 | head -n1 || true)
   msg_info "Gebundeltes SH3D-Java: ${BUNDLED_VER}"
-  if echo "${BUNDLED_VER}" | grep -qE '"1\.[0-8]\.'; then
-    msg_info "Bundled Java 8 erkannt – wird stillgelegt (System-Java übernimmt)"
-    rm -rf "${SH3D_DIR}/runtime.bundled-j8-disabled"
-    mv "${SH3D_DIR}/runtime" "${SH3D_DIR}/runtime.bundled-j8-disabled"
-  fi
+  rm -rf "${SH3D_DIR}/runtime.bundled-backup"
+  mv "${SH3D_DIR}/runtime" "${SH3D_DIR}/runtime.bundled-backup"
+  msg_info "Bundle gesichert als runtime.bundled-backup"
 fi
-SYS_JAVA_VER=$(java -version 2>&1 | head -n1 || true)
-msg_info "System-Java: ${SYS_JAVA_VER}"
-echo "${SYS_JAVA_VER}" | grep -qE '"(1[1-9]|[2-9][0-9])\.' || { msg_error "System-Java < 11 – MCP-Plugin braucht Java 11+"; exit 1; }
+SYS_JAVA_BIN=$(command -v java || true)
+[ -n "${SYS_JAVA_BIN}" ] || { msg_error "Kein System-Java gefunden"; exit 1; }
+SYS_JAVA_HOME=$(dirname "$(dirname "$(readlink -f "${SYS_JAVA_BIN}")")")
+[ -x "${SYS_JAVA_HOME}/bin/java" ] || { msg_error "System-Java damaged: ${SYS_JAVA_HOME}"; exit 1; }
+rm -f "${SH3D_DIR}/runtime"
+ln -s "${SYS_JAVA_HOME}" "${SH3D_DIR}/runtime"
+SYS_JAVA_VER=$("${SH3D_DIR}/runtime/bin/java" -version 2>&1 | head -n1 || true)
+msg_info "SH3D nutzt jetzt: ${SYS_JAVA_VER} (${SYS_JAVA_HOME})"
+echo "${SYS_JAVA_VER}" | grep -qE '"(1[1-9]|[2-9][0-9])\.' || { msg_error "SH3D-Java < 11 – MCP-Plugin braucht Java 11+"; exit 1; }
 msg_ok "Sweet Home 3D installiert"
 
 # ---------- 3. MCP-Plugin (latest .sh3p) ----------
