@@ -8,7 +8,7 @@ Sweet Home 3D als 24/7 Desktop in einer Proxmox-VM (Ubuntu 24.04 + XFCE + noVNC)
 - XFCE + TigerVNC (`:5901`) + noVNC Web-Desktop (`:6080`)
 - Sweet Home 3D 7.5 (SourceForge, eTeks) nach `/opt/SweetHome3D`
 - MCP-Plugin (GitHub `grimashevich/sweethome3d-mcp-server`, latest Release) nach `~/.eteks/sweethome3d/plugins/`
-- systemd-Services `vncserver@1` + `novnc`, SH3D-Autostart im VNC-Desktop
+- systemd-Services `sweethome3d-desktop` (Xvnc + XFCE + SH3D-Autostart) + `novnc` Web-Desktop (`:6080`)
 
 ## Schnellstart (Proxmox-Host)
 

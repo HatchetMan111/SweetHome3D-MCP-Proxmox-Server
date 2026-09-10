@@ -29,12 +29,14 @@ msg_ok()    { echo -e "  ${CM} $1"; }
 msg_error() { echo -e "  ${CROSS} $1"; }
 catch_errors() {
   msg_error "Fehler in Zeile $1 – Abbruch. Diagnose:"
-  echo "----- systemctl vncserver@1 -----"
-  systemctl status vncserver@1.service --no-pager 2>&1 | head -20 || true
-  echo "----- journal vncserver@1 (letzte 25) -----"
-  journalctl -u vncserver@1 --no-pager -n 25 2>&1 | tail -25 || true
+  echo "----- systemctl sweethome3d-desktop -----"
+  systemctl status sweethome3d-desktop.service --no-pager 2>&1 | head -20 || true
+  echo "----- journal sweethome3d-desktop (letzte 25) -----"
+  journalctl -u sweethome3d-desktop --no-pager -n 25 2>&1 | tail -25 || true
   echo "----- journal novnc (letzte 10) -----"
   journalctl -u novnc --no-pager -n 10 2>&1 | tail -10 || true
+  echo "----- SH3D app log -----"
+  tail -20 /var/log/sweethome3d-app.log 2>&1 || true
   echo "----- /root/.vnc logs -----"
   for f in /root/.vnc/*.log; do
     [ -f "$f" ] && { echo "--- $f ---"; tail -20 "$f" 2>&1; }
@@ -89,7 +91,7 @@ if [ "${UPGRADE:-0}" = "1" ]; then
 else
   msg_info "Upgrade übersprungen (mit UPGRADE=1 aktivierbar)"
 fi
-apt-get install -y curl wget unzip git sudo net-tools iproute2 \
+apt-get install -y curl wget unzip git sudo net-tools iproute2 xauth \
   openjdk-17-jre xfce4 xfce4-terminal dbus-x11 \
   tigervnc-standalone-server tigervnc-common \
   novnc websockify python3-websockify
@@ -131,10 +133,18 @@ for PLUGDIR in "/root/.eteks/sweethome3d/plugins" "/root/.sweethome3d/plugins" "
 done
 msg_ok "MCP-Plugin installiert"
 
-# ---------- 4. VNC + noVNC ----------
-msg_info "Richte TigerVNC (${VNC_DISPLAY}) + noVNC (${NOVNC_PORT}) ein"
-# Alte Sessions + stale X-Locks aus vorherigen (abgebrochenen) Läufen räumen
+# ---------- 4. VNC + noVNC (Xvnc direkt, ohne vncserver-Wrapper) ----------
+# Der vncserver-Perl-Wrapper starb mit Exit 255 und die Restart-Schleife hat
+# dabei jedes Mal den gerade gestarteten X-Server gekillt. Daher: Xvnc läuft
+# direkt als simple-Service, Session startet ein Wrapper-Script.
+msg_info "Richte Xvnc (${VNC_DISPLAY}) + noVNC (${NOVNC_PORT}) ein"
+# Alten Wrapper-Service + hängende Reste aus vorherigen Läufen entfernen
+systemctl disable --now vncserver@1.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/vncserver@.service
 /usr/bin/vncserver -kill "${VNC_DISPLAY}" >/dev/null 2>&1 || true
+pkill -f "Xvnc ${VNC_DISPLAY}" >/dev/null 2>&1 || true
+pkill -f "SweetHome3D/SweetHome3D" >/dev/null 2>&1 || true
+sleep 2
 DISPNUM="${VNC_DISPLAY#:}"
 rm -rf "/tmp/.X11-unix/X${DISPNUM}" "/tmp/.X${DISPNUM}-lock" || true
 rm -f /root/.vnc/*.log /root/.vnc/*.pid || true
@@ -142,32 +152,45 @@ mkdir -p /root/.vnc
 printf '%s' "${VNCPASS}" | vncpasswd -f > /root/.vnc/passwd
 chmod 600 /root/.vnc/passwd
 
-cat > /root/.vnc/xstartup <<'EOF'
+cat > /usr/local/bin/sh3d-xsession <<'EOF'
 #!/bin/sh
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+# Startet Xvnc + XFCE + Sweet Home 3D (MCP auf 9877). Läuft als systemd-Service.
+export DISPLAY=:1
+/usr/bin/Xvnc :1 -geometry 1600x900 -depth 24 -rfbport 5901 \
+  -SecurityTypes VncAuth -PasswordFile /root/.vnc/passwd \
+  -AlwaysShared -AcceptKeyEvents -AcceptPointerEvents \
+  -SendCutText -AcceptCutText -desktop 3D-Home &
+XVNC_PID=$!
+for i in $(seq 1 30); do
+  [ -S /tmp/.X11-unix/X1 ] && break
+  sleep 1
+done
+[ -S /tmp/.X11-unix/X1 ] || { echo "Xvnc-Socket fehlt, breche ab"; exit 1; }
+if command -v xauth >/dev/null 2>&1; then
+  rm -f /root/.Xauthority
+  COOKIE=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  xauth -f /root/.Xauthority add :1 . "$COOKIE"
+  export XAUTHORITY=/root/.Xauthority
+fi
+unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS
+[ -r /root/.Xresources ] && xrdb /root/.Xresources 2>/dev/null || true
 startxfce4 &
-# Sweet Home 3D Autostart (MCP startet automatisch mit, Port 9877)
 sleep 2
-/opt/SweetHome3D/SweetHome3D &
+setsid /opt/SweetHome3D/SweetHome3D >/var/log/sweethome3d-app.log 2>&1 &
+wait $XVNC_PID
 EOF
-chmod +x /root/.vnc/xstartup
+chmod +x /usr/local/bin/sh3d-xsession
 
-cat > /etc/systemd/system/vncserver@.service <<EOF
+cat > /etc/systemd/system/sweethome3d-desktop.service <<EOF
 [Unit]
-Description=TigerVNC Server :%i (SweetHome3D Desktop)
+Description=SweetHome3D Desktop (Xvnc + XFCE + SH3D)
 After=network.target
 [Service]
-Type=forking
-User=root
-PAMName=login
-PIDFile=/root/.vnc/%H:%i.pid
-ExecStartPre=/bin/sh -c '/usr/bin/vncserver -kill :%i > /dev/null 2>&1 || :'
-ExecStart=/usr/bin/vncserver :%i -geometry 1600x900 -depth 24
-ExecStop=/usr/bin/vncserver -kill :%i
-Restart=on-failure
-RestartSec=3
+Type=simple
+ExecStartPre=/bin/sh -c '/usr/bin/vncserver -kill :1 >/dev/null 2>&1 || :; /usr/bin/pkill -f "Xvnc :1" >/dev/null 2>&1 || :; rm -rf /tmp/.X11-unix/X1 /tmp/.X1-lock'
+ExecStart=/usr/local/bin/sh3d-xsession
+Restart=always
+RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -182,8 +205,8 @@ fi
 cat > /etc/systemd/system/novnc.service <<EOF
 [Unit]
 Description=noVNC WebSocket Proxy (SweetHome3D Web-Desktop)
-After=network.target vncserver@1.service
-Wants=vncserver@1.service
+After=network.target sweethome3d-desktop.service
+Wants=sweethome3d-desktop.service
 [Service]
 ExecStart=${WEBSOCKIFY_BIN} --web=${NOVNC_WEB} ${NOVNC_PORT} localhost:${VNC_PORT}
 Restart=always
@@ -193,10 +216,15 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable -q vncserver@1.service
+systemctl enable -q sweethome3d-desktop.service
 systemctl enable -q novnc.service
-systemctl restart vncserver@1.service
+systemctl restart sweethome3d-desktop.service
 systemctl restart novnc.service
+msg_info "Warte auf VNC-Port ${VNC_PORT} (max 90s)"
+for i in $(seq 1 90); do
+  (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":${VNC_PORT} " && break
+  sleep 1
+done
 msg_ok "VNC + noVNC laufen"
 
 # Firewall (falls ufw aktiv)
@@ -206,8 +234,8 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow ${MCP_PORT}/tcp >/dev/null || true
 fi
 
-sleep 3
-systemctl is-active -q vncserver@1.service || { msg_error "VNC startet nicht – journalctl -u vncserver@1"; exit 1; }
+sleep 2
+systemctl is-active -q sweethome3d-desktop.service || { msg_error "Desktop-Service startet nicht – journalctl -u sweethome3d-desktop"; exit 1; }
 systemctl is-active -q novnc.service || { msg_error "noVNC startet nicht – journalctl -u novnc"; exit 1; }
 msg_ok "Services aktiv"
 

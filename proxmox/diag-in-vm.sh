@@ -16,7 +16,7 @@ echo "===== CLOUD-INIT RUNCMD SPUREN ====="
 grep -i -E 'sweethome|runcmd' /var/log/cloud-init-output.log 2>/dev/null | tail -10 || echo "(kein cloud-init-output.log)"
 echo ""
 echo "===== SERVICES ====="
-systemctl is-active vncserver@1.service novnc.service 2>&1
+systemctl is-active sweethome3d-desktop.service novnc.service 2>&1
 echo ""
 echo "===== PORTS ====="
 (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null) | grep -E ':(6080|5901|9877)' || (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null)
@@ -27,8 +27,11 @@ echo ""
 echo "===== DATEIEN ====="
 ls /opt/ 2>&1; ls /root/.eteks/sweethome3d/plugins/ /root/.sweethome3d/plugins/ 2>&1
 echo ""
-echo "===== VNC-JOURNAL ====="
-journalctl -u vncserver@1 --no-pager -n 30 2>&1 | tail -30
+echo "===== DESKTOP-JOURNAL ====="
+journalctl -u sweethome3d-desktop --no-pager -n 30 2>&1 | tail -30
+echo ""
+echo "===== SH3D APP LOG ====="
+tail -n 20 /var/log/sweethome3d-app.log 2>&1
 echo ""
 echo "===== NOVNC-JOURNAL ====="
 journalctl -u novnc --no-pager -n 15 2>&1 | tail -15
