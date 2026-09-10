@@ -2,7 +2,7 @@
 #
 # SweetHome3D + MCP-Server + Web-Desktop (noVNC)
 # Community-Scripts Stil – zum Ausführen IN einer frischen Ubuntu 24.04 VM (Proxmox)
-# Getestet für: Ubuntu 24.04 noble, 4 vCPU / 8GB RAM / 40GB
+# Getestet für: Ubuntu 24.04 noble, 4 vCPU / 8GB RAM / 20GB (Disk später in Proxmox erweiterbar)
 # Aufruf als root:  bash sweethome3d-mcp-install.sh
 # Optional:        VNCPASS=meinpass bash sweethome3d-mcp-install.sh
 #

@@ -2,11 +2,9 @@
 
 Sweet Home 3D als 24/7 Desktop in einer Proxmox-VM (Ubuntu 24.04 + XFCE + noVNC) inkl. MCP-Plugin für AI-Steuerung via opencode / Claude.
 
-**Rechtlich sauber:** Dieses Repo enthält *keine* Binaries von Sweet Home 3D und *kein* MCP-Plugin. Das Install-Script lädt alles zur Installationszeit von den offiziellen Quellen. Siehe `NOTICE.md`.
-
 ## Was wird installiert?
 
-- Ubuntu 24.04 VM (von dir in Proxmox erstellt, 4 vCPU / 8 GB RAM / 40 GB)
+- Ubuntu 24.04 VM (von dir in Proxmox erstellt, 4 vCPU / 8 GB RAM / 20 GB, später erweiterbar)
 - XFCE + TigerVNC (`:5901`) + noVNC Web-Desktop (`:6080`)
 - Sweet Home 3D 7.5 (SourceForge, eTeks) nach `/opt/SweetHome3D`
 - MCP-Plugin (GitHub `grimashevich/sweethome3d-mcp-server`, latest Release) nach `~/.eteks/sweethome3d/plugins/`
