@@ -13,7 +13,7 @@ YW=$(echo "\033[33m"); BL=$(echo "\033[36m"); RD=$(echo "\033[01;31m")
 GN=$(echo "\033[1;92m"); CL=$(echo "\033[m"); CM="${GN}✓${CL}"; CROSS="${RD}✗${CL}"
 
 header_info() {
-  clear
+  clear 2>/dev/null || true
   cat <<"EOF"
    ____                      _   _   _                      _____ ____
   / ___|_      _____  ___  _| | | | | | ___  _ __ ___   ___|___ |  _ \
@@ -42,13 +42,25 @@ VNC_PORT="5901"
 NOVNC_PORT="6080"
 MCP_PORT="9877"
 VNCPASS="${VNCPASS:-sweethome3d}"
-DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive
 
 header_info
 echo -e "${YW}App:${CL} ${APP} | SH3D ${SH3D_VER} | VNC ${VNC_PORT} | noVNC ${NOVNC_PORT} | MCP ${MCP_PORT}\n"
 
 if [ "$(id -u)" -ne 0 ]; then msg_error "Bitte als root ausführen."; exit 1; fi
 if ! grep -qs "Ubuntu.*24.04" /etc/os-release; then msg_info "Kein Ubuntu 24.04 erkannt – versuche trotzdem weiter."; fi
+
+# Unter Cloud-Init (Auto-Install beim ersten Boot) keinen Abbruch wegen fehlendem TTY,
+# und auf cloud-init / apt-Locks warten (sonst schlägt apt-get fehl).
+if command -v cloud-init >/dev/null 2>&1; then
+  msg_info "Warte ggf. auf cloud-init (max 10 Min)"
+  cloud-init status --wait >/dev/null 2>&1 || true
+fi
+msg_info "Warte ggf. auf apt-Sperren (max 10 Min)"
+for i in $(seq 1 120); do
+  if ! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then break; fi
+  sleep 5
+done
 
 # ---------- 1. System ----------
 msg_info "System updaten + Basis installieren"
@@ -166,7 +178,7 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "${IP}" ] && IP="<VM-IP>"
 MCP_TEST=$(curl -s -m 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:${MCP_PORT}/mcp" || echo "000")
 
-clear
+clear 2>/dev/null || true
 header_info
 echo -e "${GN}✔ Installation fertig — ${APP}${CL}\n"
 echo -e "${YW}Weboberfläche (Browser):${CL}  http://${IP}:${NOVNC_PORT}/vnc.html"
