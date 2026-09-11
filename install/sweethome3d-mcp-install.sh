@@ -117,8 +117,10 @@ fi
 chmod +x "${SH3D_DIR}/SweetHome3D"
 ln -sf "${SH3D_DIR}/SweetHome3D" /usr/local/bin/sweethome3d
 # MCP-Plugin braucht Java 11+, das mitgelieferte SH3D-Runtime ist aber Java 8.
-# Der SH3D-Starter ruft hart "$app_home/runtime/bin/java" auf (kein Fallback),
-# daher wird runtime per Symlink auf das System-Java (17) gebogen.
+# Der SH3D-Starter ruft hart "$app_home/runtime/bin/java" auf (kein Fallback).
+# Lösung: runtime/bin/java wird ein Wrapper aufs System-Java (17), der zusätzlich
+# --add-opens mitgibt. Ohne die stirbt SH3Ds Java3D (JoglPipeline) auf Java 16+
+# mit "module java.desktop does not export sun.awt" (siehe App-Log).
 # Bundle bleibt als Backup erhalten.
 if [ -d "${SH3D_DIR}/runtime" ] && [ ! -L "${SH3D_DIR}/runtime" ]; then
   BUNDLED_VER=$("${SH3D_DIR}/runtime/bin/java" -version 2>&1 | head -n1 || true)
@@ -132,9 +134,20 @@ SYS_JAVA_BIN=$(command -v java || true)
 SYS_JAVA_HOME=$(dirname "$(dirname "$(readlink -f "${SYS_JAVA_BIN}")")")
 [ -x "${SYS_JAVA_HOME}/bin/java" ] || { msg_error "System-Java damaged: ${SYS_JAVA_HOME}"; exit 1; }
 rm -f "${SH3D_DIR}/runtime"
-ln -s "${SYS_JAVA_HOME}" "${SH3D_DIR}/runtime"
+mkdir -p "${SH3D_DIR}/runtime/bin"
+cat > "${SH3D_DIR}/runtime/bin/java" <<EOF
+#!/bin/sh
+# Wrapper: System-Java + Opens für SH3D-Java3D (JOGL) auf Java 16+
+exec ${SYS_JAVA_HOME}/bin/java \\
+  --add-opens java.base/java.lang=ALL-UNNAMED \\
+  --add-opens java.desktop/sun.awt=ALL-UNNAMED \\
+  --add-opens java.desktop/sun.awt.image=ALL-UNNAMED \\
+  --add-opens java.desktop/sun.java2d=ALL-UNNAMED \\
+  "\$@"
+EOF
+chmod +x "${SH3D_DIR}/runtime/bin/java"
 SYS_JAVA_VER=$("${SH3D_DIR}/runtime/bin/java" -version 2>&1 | head -n1 || true)
-msg_info "SH3D nutzt jetzt: ${SYS_JAVA_VER} (${SYS_JAVA_HOME})"
+msg_info "SH3D nutzt jetzt: ${SYS_JAVA_VER} (+ add-opens)"
 echo "${SYS_JAVA_VER}" | grep -qE '"(1[1-9]|[2-9][0-9])\.' || { msg_error "SH3D-Java < 11 – MCP-Plugin braucht Java 11+"; exit 1; }
 msg_ok "Sweet Home 3D installiert"
 
