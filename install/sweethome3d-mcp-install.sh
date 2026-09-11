@@ -93,7 +93,7 @@ if [ "${UPGRADE:-0}" = "1" ]; then
 else
   msg_info "Upgrade übersprungen (mit UPGRADE=1 aktivierbar)"
 fi
-apt-get install -y curl wget unzip git sudo net-tools iproute2 xauth libglib2.0-bin \
+apt-get install -y curl wget unzip git sudo net-tools iproute2 xauth libglib2.0-bin socat \
   openjdk-17-jre xfce4 xfce4-terminal dbus-x11 \
   tigervnc-standalone-server tigervnc-common \
   novnc websockify python3-websockify
@@ -291,11 +291,41 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# Das MCP-Plugin bindet hart an 127.0.0.1 (siehe Upstream-Source:
+# HttpServer.create(new InetSocketAddress("127.0.0.1", port))) – von außen
+# kommt man daher nie dran. Forwarder: lauscht auf der LAN-IP am GLEICHEN
+# Port und reicht an localhost weiter. URL bleibt http://VM-IP:9877/mcp.
+# (0.0.0.0:9877 geht nicht – kollidiert mit der 127.0.0.1-Bindung.)
+cat > /usr/local/bin/mcp-forward.sh <<'EOF'
+#!/bin/sh
+# Ermittelt die LAN-IPv4 und forwardet MCP-Port -> localhost
+LANIP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
+[ -z "${LANIP}" ] && { echo "keine LAN-IP gefunden"; exit 1; }
+echo "Forward ${LANIP}:9877 -> 127.0.0.1:9877"
+exec /usr/bin/socat "TCP-LISTEN:9877,bind=${LANIP},fork,reuseaddr" TCP:127.0.0.1:9877
+EOF
+chmod +x /usr/local/bin/mcp-forward.sh
+
+cat > /etc/systemd/system/mcp-forward.service <<EOF
+[Unit]
+Description=MCP Forwarder LAN-IP:9877 -> localhost:9877 (SweetHome3D Plugin bindet nur loopback)
+After=network-online.target sweethome3d-desktop.service
+Wants=network-online.target
+[Service]
+ExecStart=/usr/local/bin/mcp-forward.sh
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable -q sweethome3d-desktop.service
 systemctl enable -q novnc.service
+systemctl enable -q mcp-forward.service
 systemctl restart sweethome3d-desktop.service
 systemctl restart novnc.service
+systemctl restart mcp-forward.service
 msg_info "Warte auf VNC-Port ${VNC_PORT} (max 90s)"
 for i in $(seq 1 90); do
   (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":${VNC_PORT} " && break
@@ -313,6 +343,7 @@ fi
 sleep 2
 systemctl is-active -q sweethome3d-desktop.service || { msg_error "Desktop-Service startet nicht – journalctl -u sweethome3d-desktop"; exit 1; }
 systemctl is-active -q novnc.service || { msg_error "noVNC startet nicht – journalctl -u novnc"; exit 1; }
+systemctl is-active -q mcp-forward.service || { msg_error "MCP-Forwarder startet nicht – journalctl -u mcp-forward"; exit 1; }
 msg_ok "Services aktiv"
 
 # SH3D-Prozess muss da sein, bevor das Warten auf MCP Sinn ergibt
@@ -346,6 +377,24 @@ if [ "${MCP_TEST}" = "000" ]; then
 fi
 msg_ok "MCP antwortet (HTTP ${MCP_TEST})"
 
+# Externer Check: Forwarder auf LAN-IP muss denselben Port bedienen
+LANIP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
+if [ -n "${LANIP}" ]; then
+  msg_info "Prüfe MCP von außen (http://${LANIP}:${MCP_PORT}/health, max 30s)"
+  EXT_OK=0
+  for i in $(seq 1 10); do
+    if [ "$(curl -s -m 3 -o /dev/null -w "%{http_code}" "http://${LANIP}:${MCP_PORT}/health" 2>/dev/null || true)" = "200" ]; then EXT_OK=1; break; fi
+    sleep 3
+  done
+  if [ "${EXT_OK}" = "1" ]; then
+    msg_ok "MCP ist im LAN erreichbar (http://${LANIP}:${MCP_PORT}/mcp)"
+  else
+    msg_error "MCP-Forwarder antwortet nicht – systemctl status mcp-forward / journalctl -u mcp-forward prüfen"
+    systemctl status mcp-forward.service --no-pager 2>&1 | head -15 || true
+    exit 1
+  fi
+fi
+
 # Web-Port muss wirklich lauschen, sonst kein Erfolgsbanner
 if ! (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":${NOVNC_PORT} "; then
   msg_error "Port ${NOVNC_PORT} lauscht nicht – journalctl -u novnc prüfen"
@@ -361,7 +410,7 @@ header_info
 echo -e "${GN}✔ Installation fertig — ${APP}${CL}\n"
 echo -e "${YW}Weboberfläche (Browser):${CL}  http://${IP}:${NOVNC_PORT}/vnc.html"
 echo -e "${YW}VNC-Client:${CL}              ${IP}:${VNC_PORT}"
-echo -e "${YW}MCP-Server (in SH3D):${CL}     http://${IP}:${MCP_PORT}/mcp  (lokaler Check: HTTP ${MCP_TEST})"
+echo -e "${YW}MCP-Server (in SH3D):${CL}     http://${IP}:${MCP_PORT}/mcp  (lokaler Check: HTTP ${MCP_TEST}, im LAN via Forwarder erreichbar)"
 echo -e "${YW}Sweet Home 3D:${CL}            /opt/SweetHome3D/SweetHome3D  (läuft bereits im VNC-Desktop)"
 echo ""
 echo -e "${GN}PASSWORT Weboberfläche + VNC: '${VNCPASS}'  (bitte notieren!)${CL}"
