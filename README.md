@@ -25,9 +25,10 @@ VM_ID=200 VM_NAME=3D-Home bash -c "$(wget -qLO - https://raw.githubusercontent.c
 ```
 
 ## Innen-Setup (in der VM)
-1. Als root in der VM:
+1. In der VM anmelden (z.B. `ssh ubuntu@VM-IP`, Passwort `ubuntu`), root werden und Setup starten:
 
 ```bash
+sudo -i
 curl -fsSL -o sweethome3d-mcp-install.sh https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/install/sweethome3d-mcp-install.sh
 chmod +x sweethome3d-mcp-install.sh
 bash sweethome3d-mcp-install.sh

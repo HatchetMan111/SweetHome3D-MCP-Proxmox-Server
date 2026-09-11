@@ -58,6 +58,8 @@ NOVNC_PORT="6080"
 MCP_PORT="9877"
 VNCPASS="${VNCPASS:-sweethome3d}"
 export DEBIAN_FRONTEND=noninteractive
+# needrestart darf während des Setups keine Dienste unerwartet neu starten
+export NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
 
 header_info
 echo -e "${YW}App:${CL} ${APP} | SH3D ${SH3D_VER} | VNC ${VNC_PORT} | noVNC ${NOVNC_PORT} | MCP ${MCP_PORT}\n"
@@ -174,6 +176,9 @@ Categories=Graphics;3DGraphics;
 StartupNotify=true
 EOF
 chmod 644 /usr/share/applications/sweethome3d.desktop
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
 mkdir -p /root/Desktop
 cp /usr/share/applications/sweethome3d.desktop /root/Desktop/
 chmod +x /root/Desktop/sweethome3d.desktop
@@ -223,7 +228,8 @@ if command -v xauth >/dev/null 2>&1; then
   export XAUTHORITY=/root/.Xauthority
 fi
 unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS
-[ -r /root/.Xresources ] && xrdb /root/.Xresources 2>/dev/null || true
+if [ -r /root/.Xresources ] && command -v xrdb >/dev/null 2>&1; then xrdb /root/.Xresources 2>/dev/null || true; fi
+command -v startxfce4 >/dev/null 2>&1 || { echo "startxfce4 fehlt – XFCE unvollständig installiert"; exit 1; }
 pkill -f "com.eteks.sweethome3d.SweetHome3D" 2>/dev/null || true
 startxfce4 &
 sleep 2
@@ -289,6 +295,20 @@ sleep 2
 systemctl is-active -q sweethome3d-desktop.service || { msg_error "Desktop-Service startet nicht – journalctl -u sweethome3d-desktop"; exit 1; }
 systemctl is-active -q novnc.service || { msg_error "noVNC startet nicht – journalctl -u novnc"; exit 1; }
 msg_ok "Services aktiv"
+
+# SH3D-Prozess muss da sein, bevor das Warten auf MCP Sinn ergibt
+msg_info "Warte auf SH3D-Prozess (max 60s)"
+for i in $(seq 1 60); do
+  pgrep -f "com.eteks.sweethome3d.SweetHome3D" >/dev/null 2>&1 && break
+  sleep 1
+done
+if ! pgrep -f "com.eteks.sweethome3d.SweetHome3D" >/dev/null 2>&1; then
+  msg_error "SH3D-Prozess startet nicht:"
+  tail -30 /var/log/sweethome3d-app.log 2>&1 || true
+  journalctl -u sweethome3d-desktop --no-pager -n 20 2>&1 | tail -20 || true
+  exit 1
+fi
+msg_ok "SH3D-Prozess läuft"
 
 # SH3D (Java) braucht beim ersten Start 1-3 Min – auf MCP-Port warten statt raten
 msg_info "Warte auf Sweet Home 3D / MCP-Port ${MCP_PORT} (max 3 Min)"

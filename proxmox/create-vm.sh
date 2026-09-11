@@ -202,13 +202,14 @@ if [ "${AUTO_INSTALL}" = "1" ]; then
   echo "  Login: ubuntu / ubuntu (bitte ändern!), VNC-Pass: ${VNCPASS}"
   echo "  Fertig wenn: http://VM-IP:6080/vnc.html erreichbar ist."
   echo ""
-  echo -e "${BL}Falls es hängt, manuell in der VM:${CL}"
+  echo -e "${BL}Falls es hängt, manuell in der VM (erst sudo -i):${CL}"
 else
   echo -e "${BL}So geht's weiter:${CL}"
   echo "  1) Proxmox → VM ${VMID} → Console/Cloud-Init IP abwarten (DHCP)."
   echo "     Login: ubuntu / ubuntu (bitte nach erstem Login ändern!)"
-  echo "  2) In der VM als root das Innen-Setup starten:"
+  echo "  2) In der VM anmelden (ubuntu/ubuntu), dann als root das Innen-Setup starten:"
 fi
+echo "     sudo -i"
 echo "     curl -fsSL -o sweethome3d-mcp-install.sh \\"
 echo "       https://raw.githubusercontent.com/HatchetMan111/SweetHome3D-MCP-Proxmox-Server/main/install/sweethome3d-mcp-install.sh"
 echo "     chmod +x sweethome3d-mcp-install.sh && bash sweethome3d-mcp-install.sh"
