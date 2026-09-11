@@ -93,7 +93,7 @@ if [ "${UPGRADE:-0}" = "1" ]; then
 else
   msg_info "Upgrade übersprungen (mit UPGRADE=1 aktivierbar)"
 fi
-apt-get install -y curl wget unzip git sudo net-tools iproute2 xauth \
+apt-get install -y curl wget unzip git sudo net-tools iproute2 xauth libglib2.0-bin \
   openjdk-17-jre xfce4 xfce4-terminal dbus-x11 \
   tigervnc-standalone-server tigervnc-common \
   novnc websockify python3-websockify
@@ -176,13 +176,15 @@ msg_ok "MCP-Plugin installiert (${PLUGIN_FILE})"
 msg_info "Lege Sweet-Home-3D-Starter an (Menü + Desktop-Icon)"
 SH3D_ICON=$(ls "${SH3D_DIR}"/*.png 2>/dev/null | head -n1 || true)
 [ -z "${SH3D_ICON}" ] && SH3D_ICON="applications-graphics"
+# Starter startet nur, wenn noch keine Instanz läuft (2. Instanz würde
+# sich mit der ersten um MCP-Port 9877 prügeln und still sterben).
 cat > /usr/share/applications/sweethome3d.desktop <<EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Sweet Home 3D
 Comment=Grundrisse und 3D-Einrichtung – AI-steuerbar via MCP (Port 9877)
-Exec=${SH3D_DIR}/SweetHome3D
+Exec=sh -c 'pgrep -f "com.eteks.sweethome3d.SweetHome3D" >/dev/null 2>&1 || exec ${SH3D_DIR}/SweetHome3D'
 Icon=${SH3D_ICON}
 Terminal=false
 Categories=Graphics;3DGraphics;
@@ -194,9 +196,13 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 mkdir -p /root/Desktop
 cp /usr/share/applications/sweethome3d.desktop /root/Desktop/
+chown root:root /root/Desktop/sweethome3d.desktop
 chmod +x /root/Desktop/sweethome3d.desktop
+# Als vertrauenswürdig markieren, sonst zeigt XFCE "Untrusted application launcher"
 if command -v gio >/dev/null 2>&1; then
   gio set /root/Desktop/sweethome3d.desktop metadata::trusted true 2>/dev/null || true
+else
+  msg_info "gio fehlt – Icon ggf. einmalig per Rechtsklick als ausführbar markieren"
 fi
 msg_ok "Starter angelegt (Menü + Desktop)"
 
